@@ -72,7 +72,7 @@ anything missing.
 > 'pyproject.toml' found."* (That is the doubled-path `argus/argus` mistake.)
 
 ```bash
-git clone <repo> argus && cd argus     # repo ROOT (where pyproject.toml lives)
+git clone https://github.com/exploitwizard/Argus.git argus && cd argus   # repo ROOT (where pyproject.toml lives)
 python -m venv .venv && source .venv/bin/activate
 pip install -e .                       # add ".[dev]" for the test/lint toolchain
 ```
