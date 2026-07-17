@@ -1,0 +1,22 @@
+# ARGUS user settings — non-secret preferences only.
+#
+# API keys are NEVER stored here; they live in the OS keyring (see `argus config`).
+# This file is written to your platform config dir; this copy is documentation.
+
+default_model: "claude-sonnet-5"           # litellm model string used when --model is omitted
+
+# Optional per-provider default models, selected when you switch providers.
+provider_defaults:
+  anthropic: "claude-sonnet-5"
+  openai: "gpt-5.1"
+  gemini: "gemini/gemini-2.5-pro"
+  groq: "groq/llama-3.3-70b-versatile"
+  deepseek: "deepseek/deepseek-chat"
+  ollama: "ollama/llama3.1"
+
+# Where Ollama is reachable, if you use fully-local hunting.
+ollama_base_url: "http://localhost:11434"
+
+# UI preferences.
+ui:
+  live_dashboard: true                     # show the rich live status view during a scan

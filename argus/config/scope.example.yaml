@@ -1,0 +1,31 @@
+# ARGUS scope file — the contract that keeps a run inside authorized boundaries.
+#
+# Every host, IP, and URL ARGUS is about to touch is checked against this file
+# BEFORE any tool runs against it. Out-of-scope items are dropped and logged,
+# never sent. Copy this to scope.yaml and edit for your engagement.
+
+engagement: "Example Corp bug bounty — HackerOne"
+authorized_by: "you@example.com"          # who authorized this / your handle
+
+in_scope:
+  domains:                                 # wildcards allowed via leading '*.'
+    - "example.com"
+    - "*.example.com"
+  cidrs:                                   # optional explicit IP ranges in scope
+    - "203.0.113.0/24"
+
+out_of_scope:                              # takes precedence over in_scope
+  domains:
+    - "blog.example.com"                   # e.g. hosted WordPress you may not test
+    - "*.corp.example.com"                 # internal / employee-only surfaces
+  cidrs: []
+
+# Traffic controls honored by every tool wrapper.
+limits:
+  max_concurrency: 20                      # global ceiling on parallel tool processes
+  requests_per_second: 10                  # global RPS ceiling across all tools
+  max_hosts_per_phase: 500                 # safety cap to avoid runaway fan-out
+
+# Allowed intensity. ARGUS never exploits, sprays credentials, or brute-forces
+# authentication regardless of this setting — it only widens/narrows recon depth.
+intensity: med                             # low | med | high
