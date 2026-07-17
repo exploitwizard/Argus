@@ -1,0 +1,26 @@
+# ARGUS recipe — deep-recon
+# All six phases at higher intensity: full enumeration, host discovery, content
+# harvest, deep analysis (JS/secrets/params), vuln detection + screenshots, report.
+#   argus run deep-recon.yaml --target example.com --scope scope.yaml \
+#       --param wordlist=/usr/share/seclists/Discovery/Web-Content/common.txt
+name: deep-recon
+description: Full six-phase, high-intensity authorized recon and detection.
+model: null
+intensity: high
+scope: null
+phases: [1, 2, 3, 4, 5, 6]
+
+# No per-phase `extensions` map => run every available extension for each phase.
+
+flags:
+  subfinder: ["-all"]
+  nuclei: ["-etags", "intrusive"]   # keep detection-only; exclude intrusive templates
+
+parameters:
+  wordlist: /usr/share/wordlists/dirb/common.txt
+  resolvers: null
+  nuclei_templates: null
+
+retry:
+  max_attempts: 2
+  validate_output: true
