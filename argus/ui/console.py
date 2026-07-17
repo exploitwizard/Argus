@@ -5,6 +5,8 @@ first-run authorization gate. Kept free of business logic so a future
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -134,7 +136,48 @@ def require_authorization(assume_yes: bool = False) -> bool:
     return False
 
 
-def _write_ack(marker) -> None:
+_LIVE_GATE_NOTICE = """\
+[bold red]LIVE-TRAFFIC GATE[/]
+
+The next phase sends live reconnaissance traffic to the target below. Review the
+plan, then confirm. ARGUS performs recon & detection only — no exploitation.
+"""
+
+
+def live_run_gate(
+    *,
+    target: str,
+    in_scope_hosts: int,
+    phases: list[int],
+    tool_names: list[str],
+    assume_yes: bool = False,
+) -> bool:
+    """Human-in-the-loop gate shown before any live-traffic phase.
+
+    Returns True to proceed, False to abort. ``assume_yes`` (from
+    ``--i-am-authorized`` / non-interactive use) passes without prompting.
+    """
+    console.print(Panel(_LIVE_GATE_NOTICE, border_style=ACCENT, padding=(1, 3)))
+    info(f"Target:            {target}")
+    info(f"In-scope hosts:    {in_scope_hosts}")
+    info(f"Phases to run:     {phases}")
+    info(f"Available tools:   {', '.join(tool_names) if tool_names else '(none installed)'}")
+    if assume_yes:
+        success("Proceeding (authorization pre-accepted).")
+        return True
+    try:
+        answer = console.input("[bold]Proceed with live traffic? Type [red]yes[/red]: [/]").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+        error("Aborted at live-traffic gate.")
+        return False
+    if answer.lower() == "yes":
+        return True
+    error("Aborted at live-traffic gate.")
+    return False
+
+
+def _write_ack(marker: Path) -> None:
     import datetime
 
     marker.write_text(
