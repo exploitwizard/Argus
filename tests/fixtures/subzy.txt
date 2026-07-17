@@ -1,0 +1,3 @@
+[ VULNERABLE ] takeover.example.com (Github Pages)
+[ NOT VULNERABLE ] www.example.com
+[ VULNERABLE ] old.example.com (AWS/S3)

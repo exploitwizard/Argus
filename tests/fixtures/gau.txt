@@ -1,0 +1,4 @@
+https://www.example.com/?id=1
+https://www.example.com/old/page.php
+https://api.example.com/v1/users
+ftp://ignored.example.com/file

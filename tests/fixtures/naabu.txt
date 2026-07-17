@@ -1,0 +1,4 @@
+www.example.com:80
+www.example.com:443
+api.example.com:443
+api.example.com:8443
