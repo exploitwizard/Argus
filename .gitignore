@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.env
+
+# Tooling
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# ARGUS never stores secrets in-repo, but guard against accidents:
+scope.yaml
+settings.yaml
+*.db
+*.jsonl
+runs/
+.authorized
+
+# OS
+.DS_Store
