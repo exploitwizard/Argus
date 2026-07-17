@@ -28,6 +28,7 @@ dependencies = [
     "pyyaml>=6.0",
     "litellm>=1.40",
     "langgraph>=0.2",
+    "langgraph-checkpoint-sqlite>=2.0",
     "keyring>=25.0",
     "platformdirs>=4.2",
 ]
@@ -37,6 +38,7 @@ docx = ["python-docx>=1.1"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
     "mypy>=1.10",
     "ruff>=0.5",
 ]
@@ -50,9 +52,16 @@ Homepage = "https://github.com/sid/argus"
 [tool.hatch.build.targets.wheel]
 packages = ["argus"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"argus/recipes" = "argus/recipes"
+"argus/argus_skill.md" = "argus/argus_skill.md"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore:Core Pydantic V1 functionality:UserWarning",
+]
 
 [tool.ruff]
 line-length = 100
