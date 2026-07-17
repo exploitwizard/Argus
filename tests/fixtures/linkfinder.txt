@@ -1,0 +1,4 @@
+/api/v1/users
+/admin/login
+https://cdn.example.com/app.js
+/api/v1/users
