@@ -37,7 +37,7 @@ the live target) and shows exactly what will run against how many hosts.
 Requires **Python 3.11+**. Primary environment is **Kali Linux**.
 
 ```bash
-git clone <repo> argus && cd argus
+git clone https://github.com/exploitwizard/Argus.git argus && cd argus
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .            # add ".[docx]" for DOCX reports, ".[dev]" for tests
 ```
