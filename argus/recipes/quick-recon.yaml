@@ -1,0 +1,27 @@
+# ARGUS recipe — quick-recon
+# A fast, low-intensity pass: enumerate, find live hosts, harvest URLs, report.
+# Shareable and re-runnable:  argus run quick-recon.yaml --target example.com
+name: quick-recon
+description: Fast low-intensity recon — enumeration, live hosts, URL harvest, report.
+model: null            # null = use the configured default (or --model)
+intensity: low
+scope: null            # set a path here, or pass --scope on the CLI
+phases: [1, 2, 3, 6]   # skip deep analysis + vuln scan for speed
+
+# Only run these extensions per phase (omit a phase to use all available ones).
+extensions:
+  1: [subfinder, dnsx]
+  2: [httpx, subzy]
+  3: [gau, katana]
+
+# Per-extension extra flags.
+flags:
+  subfinder: ["-all"]
+
+# User-substitutable parameters (override with --param key=value).
+parameters:
+  resolvers: null
+
+retry:
+  max_attempts: 1
+  validate_output: true
