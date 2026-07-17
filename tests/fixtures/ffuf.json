@@ -1,0 +1,1 @@
+{"commandline":"ffuf -w wl -u https://www.example.com/FUZZ -json","time":"2026-07-17","results":[{"input":{"FUZZ":"admin"},"url":"https://www.example.com/admin","status":301,"length":0},{"input":{"FUZZ":"login"},"url":"https://www.example.com/login","status":200,"length":123},{"input":{"FUZZ":"admin"},"url":"https://www.example.com/admin","status":301,"length":0}],"config":{}}

@@ -1,0 +1,3 @@
+time=2026-07-17 level=info msg=screenshot url=https://www.example.com path=/run/screenshots/https-www.example.com.png
+time=2026-07-17 level=info msg=screenshot url=https://api.example.com path=/run/screenshots/https-api.example.com.png
+time=2026-07-17 level=info msg=starting

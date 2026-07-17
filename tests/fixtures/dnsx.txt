@@ -1,0 +1,3 @@
+www.example.com [A] [93.184.216.34]
+api.example.com [A] [93.184.216.35]
+dev.example.com
