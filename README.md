@@ -42,10 +42,25 @@ It performs **recon and detection only** — never exploitation.
 | 3 | Content/URL Harvesting | `katana`, `gau`, `ffuf` | Crawl, pull historical URLs, content-discovery fuzzing |
 | 4 | Deep Analysis | `LinkFinder`, `trufflehog`, `arjun` | JS endpoint extraction, secret detection, hidden params |
 | 5 | Vuln Scan & Triage | `nuclei`, `gowitness` | Template **detection** + screenshots |
-| 6 | Reporting | *(none)* | Composes a Markdown + JSON report |
+| — | AI triage | *(LLM + web search)* | Turns raw evidence into structured, researched findings |
+| 6 | Reporting | *(none)* | Composes a named `.md` + self-contained `.html` report (+ JSON) |
 
 Secret findings store **metadata only** (detector, location, verified flag) — the
 secret value is never captured, printed, or stored.
+
+### Weaknesses and Vulnerabilities (AI triage)
+
+After Phase 5, a triage agent converts every flagged signal (nuclei findings,
+subdomain takeovers, exposed secrets, discovered params) into a structured
+**Weakness** with: OWASP Top-10 (2025) category + CWE, severity with a CVSS-style
+vector, confidence, evidence, numbered **steps to reproduce**, a minimal **safe
+verification PoC**, impact, and concrete remediation. When a model is configured
+it also runs **live web research** (provider-native web search via LiteLLM) to
+cite matching CVEs and advisories. Every report gets a dedicated
+**"Weaknesses and Vulnerabilities"** section led by a severity-sorted summary
+table — nothing flagged is omitted. Offline/`--dry-run` runs still produce the
+full deterministic findings (without enrichment). The tool documents and
+verifies for responsible disclosure only — it never exploits.
 
 ## Requirements
 
@@ -82,7 +97,28 @@ Verify the CLI:
 ```bash
 argus --help
 argus check-tools                      # dependency doctor: what's installed / how to install the rest
+argus install-tools                    # install the missing ones (asks first)
+argus install-tools --dry-run          # just print the exact commands
 ```
+
+### Auto-installing recon tools
+
+`argus install-tools` resolves the correct install method per tool and installs
+the missing ones:
+
+- **apt** where the Kali package exists (nuclei, naabu, dnsx, gowitness, arjun,
+  trufflehog) — falling back to `go install`/`pipx` off-Kali;
+- **go install** for Go tools (subfinder, httpx, katana, gau, puredns, subzy, …);
+- **pipx** for Python tools (outside the ARGUS venv, onto the system PATH);
+- an **isolated venv + `/usr/local/bin` shim** for LinkFinder.
+
+It handles the Kali quirks: warns if `~/go/bin` isn't on PATH, installs the
+`libpcap-dev` (naabu) and `massdns` (puredns) prerequisites first, and runs
+`nuclei -update-templates` after installing nuclei. The **exact commands are
+shown first** (any `sudo` surfaced) and it asks before running — skip with
+`--yes`. It's **idempotent** (present tools are skipped) and one tool failing
+never aborts the rest. `argus scan TARGET --auto-install` installs anything
+missing right before a run.
 
 ## Configure a model (bring your own key)
 
@@ -117,7 +153,19 @@ argus config --provider ollama   # choose e.g. ollama/llama3.1
 
 ## Usage
 
-### 1. Create a scope file
+### 1. Create a scope file (optional)
+
+`--scope` is **optional**. If you omit it, ARGUS runs in **implicit-scope mode**:
+the target's registrable domain (e.g. `example.com` from `api.example.com`)
+becomes the scope — the apex plus every subdomain. A banner announces it:
+
+```
+Running in IMPLICIT-SCOPE mode — scope = example.com and subdomains
+```
+
+Anything discovered *outside* that root (unrelated domains, third-party hosts) is
+still dropped and never probed — the safety floor is unchanged. A full
+`scope.yaml` always takes precedence and is recommended for real engagements:
 
 ```bash
 cp argus/config/scope.example.yaml scope.yaml   # then edit for your engagement
@@ -154,6 +202,30 @@ argus scan example.com --scope scope.yaml --intensity med
 You'll acknowledge the authorization notice and pass the live-traffic gate (or use
 `--i-am-authorized` to accept both non-interactively).
 
+### Model selection — one model, or several at once
+
+```bash
+argus scan example.com --model claude-sonnet-5          # single model (default)
+argus scan example.com --models claude-sonnet-5,gpt-5.1 # multi-model, concurrent
+argus scan example.com --models m1,m2,m3 --multi-mode per-phase
+```
+
+`--models` runs several models **concurrently** (async via LiteLLM) for the
+reasoning steps. Two modes, via `--multi-mode` (default `ensemble`):
+
+- **ensemble** — the triage prompt goes to every model in parallel and the
+  findings are merged by **consensus**: a weakness confirmed by ≥ quorum models
+  gets a confidence boost and ranks higher, disagreements are flagged
+  **"needs manual review"**, and every finding records **which model(s)**
+  produced it.
+- **per-phase** — a cheaper/faster model handles mechanical steps while a
+  stronger model handles triage/reporting. The role→model map lives in
+  `argus config` (`phase_models`) or a recipe.
+
+If one model errors or has no key, it's logged and skipped — the run never
+aborts because one provider failed. API keys are never printed. Run
+`argus models` to see which providers are ready for multi-model use.
+
 ### Run a recipe (YAML playbook)
 
 Recipes bundle which phases/extensions run, their flags, model, intensity, and
@@ -175,24 +247,35 @@ Each run is a checkpointed session, so an interrupted run resumes cleanly:
 ```bash
 argus sessions list             # list runs (run_id, target, model, status)
 argus resume <run_id>           # continue an interrupted run from its last checkpoint
-argus report <run_id> --format md     # re-render a finished run's report (md | json)
+argus report <run_id> --format both   # (re)write the report (md | html | both)
 ```
+
+Reports are saved as `argus_report_<scope-or-target-slug>_<YYYYMMDD-HHMMSS>` in
+both **`.md`** and **`.html`**, into the run's output directory. The base name
+comes from the scope's engagement name, or the target/web-app domain in
+implicit-scope mode. The `.html` is **fully self-contained** (inline CSS, no
+external assets) in the charcoal/red VAPT house style, with a table of contents
+and the "Weaknesses and Vulnerabilities" section rendered as styled cards +
+tables; gowitness screenshots are linked relatively. A machine-readable
+`report.json` (aggregate) and `results.json` (faithful re-render source) are
+written alongside.
 
 ### Command reference
 
 | Command | Purpose |
 |---|---|
 | `argus check-tools` | Report which recon binaries are installed + install hints |
+| `argus install-tools [--yes] [--dry-run] [--all]` | Install missing tools (apt / go / pipx / LinkFinder shim) |
 | `argus config [--provider P]` | Store a provider API key (keyring) + default model |
-| `argus models` | List configured providers and liveness-ping each |
-| `argus scan TARGET [--scope] [--model] [--intensity] [--dry-run] [--i-am-authorized]` | Full six-phase pipeline (ad-hoc recipe) |
-| `argus run RECIPE --target T [--scope] [--model] [--param k=v] [--dry-run] [--i-am-authorized]` | Run a YAML recipe |
+| `argus models` | List providers, liveness-ping each, and show multi-model readiness |
+| `argus scan TARGET [--scope] [--model] [--models] [--multi-mode] [--intensity] [--auto-install] [--dry-run] [--i-am-authorized]` | Full six-phase pipeline (ad-hoc recipe) |
+| `argus run RECIPE --target T [--scope] [--model] [--models] [--multi-mode] [--param k=v] [--dry-run] [--i-am-authorized]` | Run a YAML recipe |
 | `argus resume RUN_ID` | Continue a checkpointed run |
-| `argus report RUN_ID [--format md\|json]` | Re-render a report |
+| `argus report RUN_ID [--format md\|html\|both]` | (Re)write the `.md`/`.html` report (default both) |
 | `argus sessions list` | List checkpointed runs |
 
 > **Planned (not yet implemented):** DOCX report output — `report` currently
-> supports `md` and `json` only.
+> writes `md` and self-contained `html` (plus a machine-readable `report.json`).
 
 ## Project layout
 

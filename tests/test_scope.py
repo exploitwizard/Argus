@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from argus.core.scope import Scope
+from argus.core.scope import Scope, registrable_domain
 
 SCOPE = Scope.from_dict(
     {
@@ -53,3 +53,53 @@ def test_wildcard_does_not_leak_to_sibling_domain():
     s = Scope.from_dict({"in_scope": {"domains": ["*.example.com"]}})
     assert not s.is_in_scope("example.com.evil.com")
     assert s.is_in_scope("a.example.com")
+
+
+# ---- implicit-scope mode (Task 1) --------------------------------------- #
+def test_registrable_domain_simple():
+    assert registrable_domain("example.com") == "example.com"
+    assert registrable_domain("api.example.com") == "example.com"
+    assert registrable_domain("https://deep.api.example.com/x") == "example.com"
+
+
+def test_registrable_domain_multi_label_suffix():
+    assert registrable_domain("foo.bar.co.uk") == "bar.co.uk"
+    assert registrable_domain("shop.example.com.au") == "example.com.au"
+    assert registrable_domain("example.co.uk") == "example.co.uk"
+
+
+def test_registrable_domain_none_for_ip_and_short():
+    assert registrable_domain("203.0.113.5") is None
+    assert registrable_domain("localhost") is None
+
+
+def test_implicit_scope_from_subdomain_target():
+    s = Scope.implicit("api.example.com")
+    # registrable domain becomes the root: apex + all subdomains in scope
+    assert s.is_in_scope("example.com")
+    assert s.is_in_scope("api.example.com")
+    assert s.is_in_scope("other.example.com")
+
+
+def test_implicit_scope_rejects_out_of_root_hosts():
+    s = Scope.implicit("example.com")
+    # unrelated / third-party hosts are NOT in scope -> dropped, never probed
+    assert not s.is_in_scope("evil.com")
+    assert not s.is_in_scope("cdn.cloudfront.net")
+    assert not s.is_in_scope("example.com.evil.com")
+
+
+def test_implicit_scope_filter_drops_out_of_root():
+    s = Scope.implicit("example.com")
+    kept, dropped = s.filter(
+        ["www.example.com", "assets.googleapis.com", "evil.com", "mail.example.com"]
+    )
+    assert set(kept) == {"www.example.com", "mail.example.com"}
+    assert set(dropped) == {"assets.googleapis.com", "evil.com"}
+
+
+def test_implicit_scope_for_ip_target():
+    s = Scope.implicit("203.0.113.5")
+    assert s.is_in_scope("203.0.113.5")
+    assert not s.is_in_scope("203.0.113.6")
+    assert not s.is_in_scope("example.com")

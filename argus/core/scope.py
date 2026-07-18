@@ -40,6 +40,29 @@ class Scope(BaseModel):
         return cls.from_dict(data)
 
     @classmethod
+    def implicit(cls, target: str) -> "Scope":
+        """Derive a target-only scope for implicit-scope mode.
+
+        The target's *registrable domain* becomes the scope root: the apex plus
+        every subdomain of it. An IP target is scoped to that exact host (``/32``
+        or ``/128``). Nothing outside this root is in scope, so assets discovered
+        elsewhere are dropped by :meth:`filter` and never probed.
+        """
+        host = _host_of(target)
+        ip = _as_ip(host)
+        if ip is not None:
+            suffix = "/32" if ip.version == 4 else "/128"
+            return cls(
+                engagement="implicit-scope",
+                in_scope_cidrs=[f"{host}{suffix}"],
+            )
+        root = registrable_domain(host) or host
+        return cls(
+            engagement="implicit-scope",
+            in_scope_domains=[root, f"*.{root}"],
+        )
+
+    @classmethod
     def from_dict(cls, data: dict) -> "Scope":
         in_scope = data.get("in_scope") or {}
         out_scope = data.get("out_of_scope") or {}
@@ -90,6 +113,45 @@ class Scope(BaseModel):
             if _domain_match(host, pattern):
                 return True
         return False
+
+
+# Common multi-label public suffixes. Not the full PSL (which would need a
+# network fetch / bundled data file); a curated set that covers the registries
+# ARGUS realistically meets. Derivation stays fully offline for the test suite.
+_MULTI_LABEL_SUFFIXES: frozenset[str] = frozenset(
+    {
+        "co.uk", "org.uk", "me.uk", "gov.uk", "ac.uk", "net.uk", "sch.uk",
+        "com.au", "net.au", "org.au", "edu.au", "gov.au", "id.au",
+        "co.nz", "net.nz", "org.nz", "govt.nz", "ac.nz",
+        "co.in", "net.in", "org.in", "firm.in", "gen.in", "ind.in", "gov.in", "ac.in",
+        "co.za", "org.za", "net.za", "gov.za",
+        "com.br", "net.br", "org.br", "gov.br",
+        "co.jp", "or.jp", "ne.jp", "ac.jp", "go.jp",
+        "com.cn", "net.cn", "org.cn", "gov.cn",
+        "com.sg", "edu.sg", "gov.sg", "net.sg", "org.sg",
+        "com.mx", "com.tr", "com.tw", "com.hk", "com.my", "com.ar", "com.co",
+        "co.id", "co.kr", "co.il", "co.th", "or.th", "in.th",
+    }
+)
+
+
+def registrable_domain(host: str) -> str | None:
+    """Return the registrable domain (eTLD+1) of ``host``, or ``None``.
+
+    ``api.example.com`` → ``example.com``; ``a.b.example.co.uk`` →
+    ``example.co.uk``. Returns ``None`` for IPs or hosts too short to have an
+    apex. Uses the curated :data:`_MULTI_LABEL_SUFFIXES` set for two-label TLDs.
+    """
+    host = _host_of(host)
+    if not host or _as_ip(host) is not None:
+        return None
+    labels = host.split(".")
+    if len(labels) < 2:
+        return None
+    last_two = ".".join(labels[-2:])
+    if last_two in _MULTI_LABEL_SUFFIXES and len(labels) >= 3:
+        return ".".join(labels[-3:])
+    return last_two
 
 
 def _norm(d: str) -> str:

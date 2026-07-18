@@ -8,15 +8,17 @@ status. Used by ``argus run``, ``argus scan``, and ``argus resume``.
 
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 from typing import Optional
 
 from argus.core import hints, paths, report as report_mod, sessions
 from argus.core.graph import build_graph
+from argus.core.modelplan import ModelPlan
 from argus.core.recipe import Recipe
 from argus.core.scope import Scope
-from argus.core.state import RunConfig, RunState, results_from_state
+from argus.core.state import RunConfig, RunState, results_from_state, weaknesses_from_state
 
 
 def new_run_id() -> str:
@@ -32,14 +34,20 @@ def build_run_config(
     dry_run: bool,
     assume_yes: bool,
     run_id: Optional[str] = None,
+    plan: Optional["ModelPlan"] = None,
 ) -> RunConfig:
     rid = run_id or new_run_id()
     run_dir = str(paths.run_dir(rid))
     params = recipe.parameters or {}
+    plan = plan or ModelPlan(primary=model, ensemble=[model])
     return RunConfig(
         run_id=rid,
         target=target,
-        model=model,
+        model=plan.primary,
+        models=plan.ensemble if plan.is_ensemble or plan.mode == "per-phase" else [],
+        multi_mode=plan.mode,
+        phase_models=plan.phase_models,
+        consensus_quorum=plan.quorum,
         intensity=recipe.intensity,
         phases=recipe.phases,
         selected=recipe.extensions,
@@ -70,6 +78,7 @@ def execute(cfg: RunConfig, scope: Scope) -> RunState:
     meta = sessions.SessionMeta(
         run_id=cfg.run_id, target=cfg.target, model=cfg.model,
         intensity=cfg.intensity, dry_run=cfg.dry_run, status="running",
+        scope_name=scope.engagement,
     )
     sessions.save_meta(meta)
 
@@ -107,13 +116,42 @@ def resume(run_id: str) -> RunState:
     return final
 
 
+def _write_results_source(
+    run_path: Path, run_id: str, target: str, scope_name: str,
+    results: list, weaknesses: list, phase_log: list[str],
+) -> None:
+    """Persist the faithful re-render source of truth (raw results + weaknesses)."""
+    source = {
+        "run_id": run_id,
+        "target": target,
+        "scope_name": scope_name,
+        "results": [r.model_dump(mode="json") for r in results],
+        "weaknesses": [w.model_dump(mode="json") for w in weaknesses],
+        "phase_log": phase_log,
+    }
+    (run_path / "results.json").write_text(
+        json.dumps(source, indent=2), encoding="utf-8"
+    )
+
+
 def _persist_artifacts(cfg: RunConfig, final: RunState) -> None:
     results = results_from_state(final)
+    weaknesses = weaknesses_from_state(final)
     run_path = paths.run_dir(cfg.run_id)
-    md = final.get("report_markdown") or report_mod.to_markdown(cfg.run_id, cfg.target, results)
-    (run_path / "report.md").write_text(md, encoding="utf-8")
+    scope_name = _scope_name_for(cfg.run_id)
+
+    _write_results_source(
+        run_path, cfg.run_id, cfg.target, scope_name, results, weaknesses,
+        final.get("phase_log", []),
+    )
+    # Aggregate summary (machine-readable, stable name) + shareable deliverables.
     (run_path / "report.json").write_text(
-        report_mod.to_json(cfg.run_id, cfg.target, results), encoding="utf-8"
+        report_mod.to_json(cfg.run_id, cfg.target, results, weaknesses=weaknesses),
+        encoding="utf-8",
+    )
+    _write_deliverables(
+        run_path, cfg.run_id, cfg.target, scope_name, results, weaknesses,
+        markdown=final.get("report_markdown"), fmt="both",
     )
     (run_path / "run.log").write_text("\n".join(final.get("phase_log", [])), encoding="utf-8")
 
@@ -122,21 +160,70 @@ def _persist_artifacts_from_meta(run_id: str, final: RunState) -> None:
     meta = sessions.load_meta(run_id)
     target = meta.target if meta else run_id
     results = results_from_state(final)
+    weaknesses = weaknesses_from_state(final)
     run_path = paths.run_dir(run_id)
-    md = final.get("report_markdown") or report_mod.to_markdown(run_id, target, results)
-    (run_path / "report.md").write_text(md, encoding="utf-8")
+    scope_name = meta.scope_name if meta else ""
+
+    _write_results_source(
+        run_path, run_id, target, scope_name, results, weaknesses,
+        final.get("phase_log", []),
+    )
     (run_path / "report.json").write_text(
-        report_mod.to_json(run_id, target, results), encoding="utf-8"
+        report_mod.to_json(run_id, target, results, weaknesses=weaknesses),
+        encoding="utf-8",
+    )
+    _write_deliverables(
+        run_path, run_id, target, scope_name, results, weaknesses,
+        markdown=final.get("report_markdown"), fmt="both",
     )
 
 
-def render_existing_report(run_id: str, fmt: str) -> str:
-    """Re-render a finished run's report from its persisted artifacts."""
+def _scope_name_for(run_id: str) -> str:
+    meta = sessions.load_meta(run_id)
+    return meta.scope_name if meta else ""
+
+
+def _write_deliverables(
+    run_path: Path, run_id: str, target: str, scope_name: str,
+    results: list, weaknesses: list, *, markdown: str | None = None, fmt: str = "both",
+) -> list[Path]:
+    """Write timestamped ``.md`` and/or ``.html`` deliverables; return their paths."""
+    base = report_mod.timestamped_name(report_mod.report_basename(scope_name, target))
+    written: list[Path] = []
+    if fmt in ("md", "both"):
+        md = markdown or report_mod.to_markdown(
+            run_id, target, results, weaknesses=weaknesses
+        )
+        p = run_path / f"{base}.md"
+        p.write_text(md, encoding="utf-8")
+        written.append(p)
+    if fmt in ("html", "both"):
+        html = report_mod.to_html(run_id, target, results, weaknesses=weaknesses)
+        p = run_path / f"{base}.html"
+        p.write_text(html, encoding="utf-8")
+        written.append(p)
+    return written
+
+
+def write_reports(run_id: str, fmt: str = "both") -> list[Path]:
+    """Re-render a finished run's report(s) from ``results.json`` and write them.
+
+    Returns the paths of the freshly written deliverables. ``fmt`` is
+    ``md`` | ``html`` | ``both``.
+    """
+    from argus.core.models import ExtensionResult, Weakness
+
     run_path = paths.run_dir(run_id)
-    if fmt == "json":
-        p = run_path / "report.json"
-    else:
-        p = run_path / "report.md"
-    if not p.exists():
-        raise FileNotFoundError(f"no {fmt} report for run {run_id} (looked in {run_path})")
-    return Path(p).read_text(encoding="utf-8")
+    source_path = run_path / "results.json"
+    if not source_path.exists():
+        raise FileNotFoundError(
+            f"no results.json for run {run_id} (looked in {run_path}); "
+            "cannot re-render — run the scan first"
+        )
+    data = json.loads(source_path.read_text(encoding="utf-8"))
+    results = [ExtensionResult(**r) for r in data.get("results", [])]
+    weaknesses = [Weakness(**w) for w in data.get("weaknesses", [])]
+    return _write_deliverables(
+        run_path, run_id, data.get("target", run_id), data.get("scope_name", ""),
+        results, weaknesses, fmt=fmt,
+    )
