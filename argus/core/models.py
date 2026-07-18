@@ -101,6 +101,48 @@ class Screenshot(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Triage / weakness models (Task 2) — structured findings for the report
+# --------------------------------------------------------------------------- #
+class Reference(BaseModel):
+    """A cited external source enriching a weakness (CVE, advisory, docs)."""
+
+    url: str
+    title: str = ""
+    source: str = ""  # e.g. "NVD", "vendor advisory", "project docs"
+    note: str = ""
+
+
+class Weakness(BaseModel):
+    """A documented, structured weakness produced by the triage agent.
+
+    Renders identically into every report format. Deterministic fields are
+    always populated from raw tool evidence; the LLM/web-research step enriches
+    reproduction, PoC, impact, remediation, and references. The tool documents
+    and verifies for responsible disclosure — it never exploits.
+    """
+
+    title: str
+    affected_asset: str
+    owasp_category: str = "Uncategorized"        # OWASP Top-10 (2025)
+    cwe: str = ""                                  # e.g. "CWE-200"
+    severity: str = "info"                         # critical|high|medium|low|info
+    cvss_vector: str = ""                          # CVSS-style vector string
+    confidence: str = "medium"                     # high|medium|low
+    evidence: str = ""                             # raw tool output / req-resp / screenshot ref
+    reproduction_steps: list[str] = Field(default_factory=list)
+    proof_of_concept: str = ""                     # minimal, safe verification PoC
+    impact: str = ""
+    remediation: str = ""
+    references: list[Reference] = Field(default_factory=list)
+
+    # Provenance / multi-model support (Task 4)
+    source_models: list[str] = Field(default_factory=list)
+    needs_manual_review: bool = False
+    source_signal: str = ""                        # which tool/signal produced it
+    enriched: bool = False                         # LLM/web-research applied
+
+
+# --------------------------------------------------------------------------- #
 # Uniform extension result container
 # --------------------------------------------------------------------------- #
 class ExtensionResult(BaseModel):
