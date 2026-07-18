@@ -54,10 +54,15 @@ def mock_all_tools(monkeypatch):
 def test_graph_has_expected_nodes_and_edges():
     g = build_graph().get_graph()
     nodes = set(g.nodes.keys())
-    assert {"phase1", "gate", "phase2", "phase3", "phase4", "phase5", "report"} <= nodes
+    assert {"phase1", "gate", "phase2", "phase3", "phase4", "phase5",
+            "triage", "report"} <= nodes
 
 
-def test_full_run_end_to_end(mock_all_tools):
+def test_full_run_end_to_end(mock_all_tools, monkeypatch):
+    # Keep triage offline/deterministic: enrichment gets no usable JSON, so it
+    # falls back to the deterministic candidates (no network call).
+    monkeypatch.setattr("argus.core.llm.complete", lambda *a, **k: "")
+
     recipe = Recipe(name="e2e", intensity="med", phases=[1, 2, 3, 4, 5, 6])
     cfg = agent.build_run_config(
         recipe=recipe, target="example.com", model="test/model",
@@ -70,16 +75,50 @@ def test_full_run_end_to_end(mock_all_tools):
     assert "ARGUS Recon Report" in md
     assert "Apache Log4j RCE" in md            # nuclei finding surfaced
     assert "takeover.example.com" in md        # subzy takeover surfaced
+    assert "Weaknesses and Vulnerabilities" in md
     # secret metadata present but never the value
     assert "AKIAEXAMPLE" not in md
 
     meta = sessions.load_meta(cfg.run_id)
     assert meta is not None and meta.status == "completed"
 
-    # artifacts persisted
+    # artifacts persisted: re-render source, aggregate json, and both deliverables
     from argus.core import paths
-    assert (paths.run_dir(cfg.run_id) / "report.md").exists()
-    assert (paths.run_dir(cfg.run_id) / "report.json").exists()
+    run_path = paths.run_dir(cfg.run_id)
+    assert (run_path / "results.json").exists()
+    assert (run_path / "report.json").exists()
+    md_files = list(run_path.glob("argus_report_*.md"))
+    html_files = list(run_path.glob("argus_report_*.html"))
+    assert md_files and html_files
+    # implicit/target-derived slug when scope has no engagement name
+    assert md_files[0].name.startswith("argus_report_example-com_")
+    # the HTML deliverable carries the flagship section too
+    assert "Weaknesses and Vulnerabilities" in html_files[0].read_text()
+
+
+def test_write_reports_rerenders_selected_formats(mock_all_tools, monkeypatch):
+    monkeypatch.setattr("argus.core.llm.complete", lambda *a, **k: "")
+    recipe = Recipe(name="e2e", phases=[1, 2, 3, 4, 5, 6])
+    cfg = agent.build_run_config(
+        recipe=recipe, target="example.com", model="test/model",
+        scope=IN_SCOPE, dry_run=False, assume_yes=True,
+    )
+    agent.execute(cfg, IN_SCOPE)
+
+    md_only = agent.write_reports(cfg.run_id, "md")
+    assert len(md_only) == 1 and md_only[0].suffix == ".md"
+
+    html_only = agent.write_reports(cfg.run_id, "html")
+    assert len(html_only) == 1 and html_only[0].suffix == ".html"
+
+    both = agent.write_reports(cfg.run_id, "both")
+    assert {p.suffix for p in both} == {".md", ".html"}
+    assert "Weaknesses and Vulnerabilities" in both[0].read_text()
+
+
+def test_write_reports_without_source_errors():
+    with pytest.raises(FileNotFoundError):
+        agent.write_reports("nonexistent-run", "both")
 
 
 def test_gate_blocks_live_run_without_authorization(mock_all_tools):

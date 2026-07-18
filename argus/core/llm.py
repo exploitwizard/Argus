@@ -7,6 +7,7 @@ pulled from the keyring and injected only into the call — never logged.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Optional
 
@@ -19,6 +20,16 @@ class PingResult:
     model: str
     ok: bool
     detail: str
+
+
+@dataclass
+class ModelReply:
+    """One model's reply in a multi-model dispatch. Never carries a key."""
+
+    model: str
+    ok: bool
+    text: str = ""
+    error: str = ""
 
 
 def _provider_of_model(model: str) -> str:
@@ -69,6 +80,103 @@ def complete(
         **_call_kwargs(model),
     )
     return resp["choices"][0]["message"]["content"] or ""
+
+
+async def acomplete(
+    model: str,
+    messages: list[dict],
+    *,
+    max_tokens: int = 1024,
+    temperature: float = 0.2,
+) -> str:
+    """Async chat completion via litellm — the concurrent building block."""
+    import litellm
+
+    resp = await litellm.acompletion(
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        **_call_kwargs(model),
+    )
+    return resp["choices"][0]["message"]["content"] or ""
+
+
+async def _acomplete_capturing(
+    model: str, messages: list[dict], sem: asyncio.Semaphore,
+    *, max_tokens: int, temperature: float,
+) -> ModelReply:
+    """Run one model, capturing any failure so one provider can't abort the batch."""
+    async with sem:
+        try:
+            text = await acomplete(
+                model, messages, max_tokens=max_tokens, temperature=temperature
+            )
+            return ModelReply(model=model, ok=True, text=text)
+        except Exception as exc:  # missing key, provider error, timeout — isolate it
+            return ModelReply(model=model, ok=False, error=_short_error(exc))
+
+
+async def _gather_completions(
+    models: list[str], messages: list[dict], concurrency: int,
+    *, max_tokens: int, temperature: float,
+) -> list[ModelReply]:
+    sem = asyncio.Semaphore(max(1, concurrency))
+    tasks = [
+        _acomplete_capturing(
+            m, messages, sem, max_tokens=max_tokens, temperature=temperature
+        )
+        for m in models
+    ]
+    return await asyncio.gather(*tasks)
+
+
+def complete_many(
+    models: list[str],
+    messages: list[dict],
+    *,
+    max_tokens: int = 1024,
+    temperature: float = 0.2,
+    concurrency: int = 8,
+) -> list[ModelReply]:
+    """Dispatch the same prompt to several models concurrently (order preserved).
+
+    Returns one :class:`ModelReply` per input model. A model that errors (bad
+    key, provider failure, timeout) comes back ``ok=False`` — the batch never
+    raises. Concurrency is capped by the global ceiling.
+    """
+    if not models:
+        return []
+    coro = _gather_completions(
+        models, messages, concurrency,
+        max_tokens=max_tokens, temperature=temperature,
+    )
+    try:
+        return asyncio.run(coro)
+    except RuntimeError:
+        # Already inside a running loop (rare in the sync CLI path) — use a fresh one.
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+
+def parse_models(spec: str | None) -> list[str]:
+    """Parse a comma-separated ``--models`` spec into a deduped, ordered list."""
+    if not spec:
+        return []
+    seen: dict[str, None] = {}
+    for part in spec.split(","):
+        m = part.strip()
+        if m and m not in seen:
+            seen[m] = None
+    return list(seen.keys())
+
+
+def multi_model_ready(model: str) -> bool:
+    """True if ``model``'s provider has a usable key (or needs none). No key shown."""
+    provider = _provider_of_model(model)
+    return config.has_api_key(provider)
 
 
 def ping(model: str) -> PingResult:

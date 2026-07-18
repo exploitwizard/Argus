@@ -12,7 +12,7 @@ from typing import Annotated, Any, TypedDict
 
 from pydantic import BaseModel, Field
 
-from argus.core.models import ExtensionResult
+from argus.core.models import ExtensionResult, Weakness
 from argus.core.scope import Scope
 
 
@@ -22,6 +22,10 @@ class RunConfig(BaseModel):
     run_id: str
     target: str
     model: str
+    models: list[str] = Field(default_factory=list)  # ensemble; [] => single `model`
+    multi_mode: str = "single"                        # single | per-phase | ensemble
+    phase_models: dict[str, str] = Field(default_factory=dict)  # role -> model
+    consensus_quorum: int = 1
     intensity: str = "med"
     phases: list[int] = Field(default_factory=lambda: [1, 2, 3, 4, 5, 6])
     selected: dict[int, list[str]] = Field(default_factory=dict)
@@ -48,6 +52,7 @@ class RunState(TypedDict, total=False):
     phase_log: Annotated[list[str], operator.add]
     gate_passed: bool
     aborted: bool
+    weaknesses: list[dict]                         # Weakness dumps from triage
     report_markdown: str
 
 
@@ -61,3 +66,7 @@ def config_from_state(state: RunState) -> RunConfig:
 
 def results_from_state(state: RunState) -> list[ExtensionResult]:
     return [ExtensionResult(**r) for r in state.get("results", [])]
+
+
+def weaknesses_from_state(state: RunState) -> list[Weakness]:
+    return [Weakness(**w) for w in state.get("weaknesses", [])]

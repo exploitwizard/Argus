@@ -29,6 +29,7 @@ class SessionMeta(BaseModel):
     created_at: str = ""
     updated_at: str = ""
     scope_path: Optional[str] = None
+    scope_name: str = ""  # engagement name, drives the report filename slug
 
 
 def _now() -> str:

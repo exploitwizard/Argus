@@ -62,6 +62,9 @@ class Settings(BaseModel):
     default_model: str = "claude-sonnet-5"
     provider_defaults: dict[str, str] = Field(default_factory=dict)
     ollama_base_url: str = "http://localhost:11434"
+    # Per-phase (per-role) model assignment for multi-model runs:
+    # {"mechanical": "<fast-model>", "triage": "<strong>", "reporting": "<strong>"}
+    phase_models: dict[str, str] = Field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #

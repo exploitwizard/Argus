@@ -1,7 +1,7 @@
 """The six-phase LangGraph state machine.
 
 Wiring:  START → phase1 → gate → (abort | phase2 → phase3 → phase4 → phase5) →
-report → END.
+triage → report → END.
 
 The gate is the human-in-the-loop checkpoint before the first live-traffic phase.
 A checkpointer persists state so an interrupted run resumes cleanly.
@@ -31,6 +31,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_node("phase3", phases.phase3)
     g.add_node("phase4", phases.phase4)
     g.add_node("phase5", phases.phase5)
+    g.add_node("triage", phases.triage)
     g.add_node("report", phases.phase6_report)
 
     g.add_edge(START, "phase1")
@@ -41,7 +42,8 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_edge("phase2", "phase3")
     g.add_edge("phase3", "phase4")
     g.add_edge("phase4", "phase5")
-    g.add_edge("phase5", "report")
+    g.add_edge("phase5", "triage")
+    g.add_edge("triage", "report")
     g.add_edge("report", END)
 
     return g.compile(checkpointer=checkpointer)
