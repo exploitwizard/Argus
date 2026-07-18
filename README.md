@@ -86,12 +86,6 @@ anything missing.
 > fails with *"does not appear to be a Python project: neither 'setup.py' nor
 > 'pyproject.toml' found."* (That is the doubled-path `argus/argus` mistake.)
 
-```bash
-git clone https://github.com/exploitwizard/Argus.git argus && cd argus   # repo ROOT (where pyproject.toml lives)
-python -m venv .venv && source .venv/bin/activate
-pip install -e .                       # add ".[dev]" for the test/lint toolchain
-```
-
 Verify the CLI:
 
 ```bash
