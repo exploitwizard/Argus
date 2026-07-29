@@ -229,11 +229,13 @@ class TriageAgent:
         *,
         model_name: str = "",
         max_repairs: int = 1,
+        skills: str = "",
     ) -> None:
         self._complete = complete_fn
         self._searcher = searcher or NullWebSearcher()
         self._model_name = model_name
         self._max_repairs = max_repairs
+        self._skills = skills
 
     def triage(
         self, results: list[ExtensionResult], target: str, scope: Scope
@@ -267,7 +269,7 @@ class TriageAgent:
 
     # ---- internals ------------------------------------------------------ #
     def _enrichment_json(self, w: Weakness) -> _Enrichment | None:
-        messages = _build_messages(w)
+        messages = _build_messages(w, self._skills)
         for _ in range(self._max_repairs + 1):
             raw = self._complete(messages)
             parsed = _try_parse(raw)
@@ -300,12 +302,14 @@ def triage_run(
     quorum: int = 1,
     concurrency: int = 8,
     dry_run: bool = False,
+    skills: str = "",
 ) -> list[Weakness]:
     """Graph-facing entry point.
 
     Offline / dry-run → deterministic candidates only (no network). With 2+
     ``models`` → ensemble/consensus triage. With a single model → LLM +
     web-research enrichment. Any failure degrades to the deterministic candidate.
+    ``skills`` is operator methodology folded into the LLM prompt (model runs only).
     """
     if dry_run:
         return build_candidates(results, target, scope)
@@ -317,6 +321,7 @@ def triage_run(
             return triage_ensemble(
                 results, target, scope, models=ensemble, quorum=quorum,
                 searcher=LiteLLMWebSearcher(ensemble[0]), concurrency=concurrency,
+                skills=skills,
             )
         except Exception:
             return build_candidates(results, target, scope)
@@ -331,15 +336,23 @@ def triage_run(
     def _complete(messages: list[dict]) -> str:
         return llm.complete(single, messages, max_tokens=1200, temperature=0.1)
 
-    agent = TriageAgent(_complete, LiteLLMWebSearcher(single), model_name=single)
+    agent = TriageAgent(_complete, LiteLLMWebSearcher(single), model_name=single, skills=skills)
     try:
         return agent.triage(results, target, scope)
     except Exception:
         return build_candidates(results, target, scope)
 
 
-def _build_messages(w: Weakness) -> list[dict]:
-    """The enrichment prompt for one candidate — shared by single and ensemble."""
+def _build_messages(w: Weakness, skills: str = "") -> list[dict]:
+    """The enrichment prompt for one candidate — shared by single and ensemble.
+
+    Operator-provided ``skills`` are appended to the system prompt, followed by a
+    re-asserted safety floor so the methodology can only guide detection and
+    documentation — never relax the recon-only / no-exploitation rules.
+    """
+    from argus.core.skills import as_prompt_block
+
+    system = _SYSTEM + as_prompt_block(skills)
     user = (
         "Enrich this weakness for a responsible-disclosure report. Keep the "
         "PoC safe (verification only, no exploitation).\n\n"
@@ -352,7 +365,7 @@ def _build_messages(w: Weakness) -> list[dict]:
         "genuine weakness?), severity (one of critical|high|medium|low|info)."
     )
     return [
-        {"role": "system", "content": _SYSTEM},
+        {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
 
@@ -437,12 +450,13 @@ def triage_ensemble(
     searcher: WebSearcher | None = None,
     concurrency: int = 8,
     complete_many: Callable[..., list] | None = None,
+    skills: str = "",
 ) -> list[Weakness]:
     """Ensemble triage: enrich each candidate with all models, merge by consensus.
 
     ``complete_many`` is injected for testing; by default it dispatches through
     the LiteLLM async layer. A model that fails contributes no opinion but never
-    aborts the batch.
+    aborts the batch. ``skills`` are folded into every model's prompt.
     """
     if complete_many is None:
         from argus.core import llm
@@ -452,7 +466,7 @@ def triage_ensemble(
     candidates = build_candidates(results, target, scope)
     merged: list[Weakness] = []
     for cand in candidates:
-        messages = _build_messages(cand)
+        messages = _build_messages(cand, skills)
         replies = complete_many(models, messages, concurrency=concurrency)
         opinions: list[tuple[str, _Enrichment | None]] = [
             (r.model, _try_parse(r.text) if r.ok else None) for r in replies

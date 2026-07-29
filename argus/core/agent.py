@@ -37,6 +37,7 @@ def build_run_config(
     assume_yes: bool,
     run_id: Optional[str] = None,
     plan: Optional["ModelPlan"] = None,
+    skills: str = "",
 ) -> RunConfig:
     rid = run_id or new_run_id()
     run_dir = str(paths.run_dir(rid))
@@ -60,6 +61,7 @@ def build_run_config(
         wordlist=params.get("wordlist"),
         resolvers=params.get("resolvers"),
         nuclei_templates=params.get("nuclei_templates"),
+        skills=skills,
     )
 
 

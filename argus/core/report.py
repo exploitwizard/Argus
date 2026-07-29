@@ -9,6 +9,7 @@ report on any failure.
 
 from __future__ import annotations
 
+import base64
 import html as _html
 import json
 import re
@@ -140,6 +141,15 @@ def live_host_details(results: list[ExtensionResult]) -> list[dict]:
                     "tech": ", ".join(h.tech),
                 }
     return [seen[u] for u in sorted(seen)]
+
+
+def screenshot_details(results: list[ExtensionResult]) -> list[dict]:
+    """De-duplicated screenshot rows ``{url, path}`` (gowitness), sorted by path."""
+    seen: dict[str, str] = {}
+    for r in results:
+        for s in r.screenshots:
+            seen.setdefault(s.path, s.url)
+    return [{"path": p, "url": seen[p]} for p in sorted(seen)]
 
 
 def sort_weaknesses(weaknesses: list[Weakness]) -> list[Weakness]:
@@ -305,7 +315,16 @@ def to_markdown(
     lines += _md_list_section("URLs harvested", agg["urls"])
     lines += _md_list_section("JS endpoints", agg["js_endpoints"])
     lines += _md_list_section("Hidden parameters", agg["params"])
-    lines += _md_list_section("Screenshots", agg["screenshots"])
+
+    shots = screenshot_details(results)
+    if shots:
+        lines += [f"## Screenshots ({len(shots)})", ""]
+        for s in shots[:MAX_LIST]:
+            cap = s["url"] or Path(s["path"]).name
+            # Relative image ref (report .md sits alongside the screenshots/ dir).
+            lines.append(f"- **{cap}** — `{s['path']}`")
+            lines.append(f"  ![{cap}](screenshots/{Path(s['path']).name})")
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -357,6 +376,13 @@ tr:nth-child(even) td { background: #1b1e24; }
   margin-top: 3rem; padding-top: 1rem; }
 img.shot { max-width: 100%; border: 1px solid #2a2d34; border-radius: 6px;
   margin: .5rem 0; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem; margin: 1rem 0; }
+.shotfig { margin: 0; background: #1b1e24; border: 1px solid #2a2d34;
+  border-radius: 8px; padding: .5rem; }
+.shotfig img { width: 100%; margin: 0; }
+.shotfig figcaption { color: #8a8f98; font-size: .78rem; margin-top: .4rem;
+  word-break: break-all; }
 """.strip()
 
 
@@ -443,13 +469,58 @@ def _weakness_cards_html(weaknesses: list[Weakness]) -> str:
     return "\n".join(parts)
 
 
+# Embed screenshots up to this size as data URIs (truly self-contained HTML);
+# larger ones fall back to a relative link so the report file never explodes.
+_MAX_EMBED_BYTES = 3 * 1024 * 1024
+_IMG_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+             ".gif": "image/gif", ".webp": "image/webp"}
+
+
+def _image_src(path: str) -> str:
+    """A self-contained ``src`` for a screenshot.
+
+    Reads the file and returns a base64 ``data:`` URI when possible (so the HTML
+    is portable — no external asset load). Falls back to a relative
+    ``screenshots/<name>`` link if the file is missing or too large. Never emits
+    an ``http(s)`` reference, keeping the report self-contained.
+    """
+    p = Path(path)
+    mime = _IMG_MIME.get(p.suffix.lower(), "image/png")
+    try:
+        if p.is_file() and p.stat().st_size <= _MAX_EMBED_BYTES:
+            data = base64.b64encode(p.read_bytes()).decode("ascii")
+            return f"data:{mime};base64,{data}"
+    except OSError:
+        pass
+    return f"screenshots/{_esc(p.name)}"
+
+
 def _screenshot_imgs(evidence: str) -> list[str]:
-    """Emit relatively-linked <img> tags for any screenshot path in the evidence."""
+    """Emit <img> tags for any screenshot path referenced in a weakness's evidence."""
     imgs: list[str] = []
     for m in re.finditer(r"Screenshot:\s*(\S+)", evidence):
-        rel = Path(m.group(1)).name  # link relatively by basename (self-contained)
-        imgs.append(f'<img class="shot" src="{_esc(rel)}" alt="screenshot: {_esc(rel)}">')
+        path = m.group(1)
+        imgs.append(f'<img class="shot" src="{_image_src(path)}" alt="screenshot: {_esc(Path(path).name)}">')
     return imgs
+
+
+def _screenshot_gallery_html(shots: list[dict]) -> str:
+    """A titled gallery of captured screenshots, each embedded as a self-contained image."""
+    if not shots:
+        return ""
+    cards: list[str] = []
+    for s in shots[:MAX_LIST]:
+        cap = _esc(s["url"] or Path(s["path"]).name)
+        cards.append(
+            '<figure class="shotfig">'
+            f'<img class="shot" src="{_image_src(s["path"])}" alt="screenshot: {cap}">'
+            f"<figcaption>{cap}</figcaption></figure>"
+        )
+    more = ""
+    if len(shots) > MAX_LIST:
+        more = f'<p class="note">…and {len(shots) - MAX_LIST} more in the run\'s screenshots/ folder.</p>'
+    return (f'<h2 id="screenshots">Screenshots ({len(shots)})</h2>'
+            f'<div class="gallery">{"".join(cards)}</div>{more}')
 
 
 def to_html(
@@ -566,7 +637,7 @@ def to_html(
     body.append(_html_list_section("URLs harvested", "urls", agg["urls"]))
     body.append(_html_list_section("JS endpoints", "js", agg["js_endpoints"]))
     body.append(_html_list_section("Hidden parameters", "params", agg["params"]))
-    body.append(_html_list_section("Screenshots", "screenshots", agg["screenshots"]))
+    body.append(_screenshot_gallery_html(screenshot_details(results)))
 
     body.append(
         '<p class="disclaimer">Generated by ARGUS for authorized reconnaissance and '

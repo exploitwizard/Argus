@@ -69,6 +69,7 @@ def triage(state: RunState) -> dict:
         quorum=cfg.consensus_quorum,
         concurrency=scope.limits.max_concurrency,
         dry_run=cfg.dry_run,
+        skills=cfg.skills,
     )
     enriched = sum(1 for w in weaknesses if w.enriched)
     review = sum(1 for w in weaknesses if w.needs_manual_review)

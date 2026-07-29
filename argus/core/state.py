@@ -36,6 +36,7 @@ class RunConfig(BaseModel):
     wordlist: str | None = None
     resolvers: str | None = None
     nuclei_templates: str | None = None
+    skills: str = ""  # operator-provided methodology folded into triage context
 
     model_config = {"arbitrary_types_allowed": True}
 

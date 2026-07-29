@@ -268,6 +268,10 @@ def run(
     param: list[str] = typer.Option(
         [], "--param", help="Recipe parameter override: key=value (repeatable)."
     ),
+    skills: Optional[str] = typer.Option(
+        None, "--skills",
+        help="Your own methodology (skills.md, a folder, or skills.zip) to guide triage.",
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Plan only — build commands, send NO live traffic."
     ),
@@ -298,6 +302,7 @@ def run(
         multi_mode=multi_mode.value,
         dry_run=dry_run,
         assume_yes=i_am_authorized,
+        skills_path=skills,
     )
 
 
@@ -317,6 +322,10 @@ def scan(
         help="With --models: ensemble (consensus triage) or per-phase assignment.",
     ),
     intensity: Intensity = typer.Option(Intensity.med, "--intensity", "-i", help="Recon depth."),
+    skills: Optional[str] = typer.Option(
+        None, "--skills",
+        help="Your own methodology (skills.md, a folder, or skills.zip) to guide triage.",
+    ),
     auto_install: bool = typer.Option(
         False, "--auto-install", help="Install any missing recon tools before running."
     ),
@@ -344,6 +353,7 @@ def scan(
         multi_mode=multi_mode.value,
         dry_run=dry_run,
         assume_yes=i_am_authorized,
+        skills_path=skills,
     )
 
 
@@ -427,6 +437,7 @@ def _execute_run(
     assume_yes: bool,
     models: Optional[str] = None,
     multi_mode: str = "ensemble",
+    skills_path: Optional[str] = None,
 ) -> None:
     from argus.core import agent, config as cfg_mod, llm
     from argus.core.modelplan import resolve_plan
@@ -503,6 +514,23 @@ def _execute_run(
         ):
             raise typer.Exit(code=2)
 
+    # --- operator skills (bring-your-own methodology) -------------------- #
+    skills_text = ""
+    if skills_path:
+        from argus.core import skills as skills_mod
+
+        try:
+            skills_text = skills_mod.load_skills(skills_path)
+        except skills_mod.SkillsError as exc:
+            ui.error(str(exc))
+            raise typer.Exit(code=2)
+        ui.info(
+            f"Loaded operator skills from {skills_path} ({len(skills_text)} chars) — "
+            "folded into triage (needs a model; detection & documentation only)."
+        )
+        if dry_run:
+            ui.warn("Skills only affect model-driven triage; a --dry-run performs no triage.")
+
     # --- build config + execute ------------------------------------------ #
     cfg = agent.build_run_config(
         recipe=recipe,
@@ -512,6 +540,7 @@ def _execute_run(
         dry_run=dry_run,
         assume_yes=assume_yes or dry_run,
         plan=plan,
+        skills=skills_text,
     )
     model_desc = resolved_model if plan.mode == "single" else f"{plan.mode}:{','.join(plan.ensemble)}"
     ui.info(f"Run ID: {cfg.run_id}  model={model_desc}  dry_run={dry_run}")

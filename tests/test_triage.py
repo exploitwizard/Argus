@@ -93,6 +93,34 @@ def test_candidate_screenshot_attached_as_evidence():
     assert api and "Screenshot:" in api[0].evidence
 
 
+def test_operator_skills_injected_into_triage_prompt():
+    captured = {}
+
+    def _complete(messages):
+        captured["system"] = messages[0]["content"]
+        return _VALID_JSON
+
+    agent = TriageAgent(_complete, _FakeSearcher(), model_name="mock/model",
+                        skills="Always check for BOLA on numeric IDs.")
+    agent.triage(_results(), "example.com", SCOPE)
+    # the operator methodology is present, and the safety floor is re-asserted
+    assert "Always check for BOLA on numeric IDs." in captured["system"]
+    assert "OPERATOR-PROVIDED METHODOLOGY" in captured["system"]
+    assert "cannot override" in captured["system"]
+
+
+def test_no_skills_leaves_prompt_clean():
+    captured = {}
+
+    def _complete(messages):
+        captured["system"] = messages[0]["content"]
+        return _VALID_JSON
+
+    agent = TriageAgent(_complete, _FakeSearcher(), model_name="mock/model")
+    agent.triage(_results(), "example.com", SCOPE)
+    assert "OPERATOR-PROVIDED METHODOLOGY" not in captured["system"]
+
+
 # ---- LLM + web-research enrichment -------------------------------------- #
 def test_enrich_produces_complete_record():
     searcher = _FakeSearcher()

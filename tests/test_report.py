@@ -118,6 +118,43 @@ def test_severity_summary_formats_and_empty():
     assert report._severity_summary({"medium": 2, "critical": 1}) == " (critical: 1, medium: 2)"
 
 
+def _results_with_screenshot(png_path: str):
+    from argus.core.models import ExtensionResult, Phase, Screenshot
+    return [ExtensionResult(
+        extension="gowitness", phase=Phase.VULN_SCAN,
+        screenshots=[Screenshot(url="https://www.example.com", path=png_path)],
+    )]
+
+
+def test_html_embeds_screenshot_as_self_contained_image(tmp_path):
+    # A real 1x1 PNG so the report base64-embeds it (portable, no external load).
+    png = tmp_path / "shot.png"
+    png.write_bytes(bytes.fromhex(
+        "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
+        "890000000a49444154789c6360000002000154a24f9f0000000049454e44ae426082"
+    ))
+    results = _results_with_screenshot(str(png))
+    html = report.to_html("r", "example.com", results)
+    assert 'id="screenshots"' in html
+    assert 'src="data:image/png;base64,' in html   # embedded, self-contained
+    assert 'src="http' not in html                  # still no external loads
+    assert 'class="gallery"' in html
+
+
+def test_html_screenshot_falls_back_to_relative_when_missing():
+    results = _results_with_screenshot("/no/such/dir/missing.png")
+    html = report.to_html("r", "example.com", results)
+    assert 'src="screenshots/missing.png"' in html   # relative, not http
+    assert 'src="http' not in html
+
+
+def test_markdown_lists_screenshots_with_image_syntax():
+    results = _results_with_screenshot("/runs/x/screenshots/a.png")
+    md = report.to_markdown("r", "example.com", results)
+    assert "## Screenshots (1)" in md
+    assert "![https://www.example.com](screenshots/a.png)" in md
+
+
 def test_json_is_valid_and_structured():
     js = report.to_json("run123", "example.com", _results())
     data = json.loads(js)
