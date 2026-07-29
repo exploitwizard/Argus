@@ -81,17 +81,52 @@ anything missing.
 ## Installation
 
 > [!IMPORTANT]
-> Run `pip install -e .` from the **repository root** — the directory that
-> contains `pyproject.toml`. Running it from the inner `argus/` package directory
-> fails with *"does not appear to be a Python project: neither 'setup.py' nor
+> Install from the **repository root** — the directory that contains
+> `pyproject.toml`. Installing from the inner `argus/` package directory fails
+> with *"does not appear to be a Python project: neither 'setup.py' nor
 > 'pyproject.toml' found."* (That is the doubled-path `argus/argus` mistake.)
 
-Verify the CLI:
+### Recommended — global install (the `argus` command works everywhere)
+
+Use [pipx](https://pipx.pypa.io/) to install ARGUS into its own isolated
+environment and expose a global `argus` command on your PATH. Typing `argus` in
+any directory then launches the tool — no venv to activate.
 
 ```bash
+git clone https://github.com/exploitwizard/Argus.git argus && cd argus   # repo ROOT (where pyproject.toml lives)
+pipx install --editable .              # global `argus`; --editable keeps it tracking the source
+```
+
+`--editable` means edits to the source are picked up immediately (no reinstall).
+If you don't have pipx: `brew install pipx && pipx ensurepath` (macOS) or
+`python3 -m pip install --user pipx && python3 -m pipx ensurepath`, then restart
+your shell.
+
+> pipx installs the `argus` launcher into `~/.local/bin`. If your shell can't
+> find `argus` after install, that directory isn't on your PATH — run
+> `pipx ensurepath` and open a new terminal.
+
+To update later, `git pull` (editable installs reflect it automatically); to
+remove, `pipx uninstall argus-recon`.
+
+### Alternative — virtualenv (for hacking on ARGUS itself)
+
+A local venv keeps everything inside the project — best when you're developing or
+running the test/lint toolchain. `argus` only works while the venv is active.
+
+```bash
+git clone https://github.com/exploitwizard/Argus.git argus && cd argus
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .                       # add ".[dev]" for the test/lint toolchain
+```
+
+### Verify the CLI
+
+```bash
+argus --version
 argus --help
 argus check-tools                      # dependency doctor: what's installed / how to install the rest
-argus install-tools                    # install the missing ones (asks first)
+argus install-tools                    # install the missing recon binaries (asks first)
 argus install-tools --dry-run          # just print the exact commands
 ```
 
