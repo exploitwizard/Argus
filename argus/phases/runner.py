@@ -72,6 +72,8 @@ def run_tool_phase(state: RunState, phase: int) -> dict:
     new_subs: list[str] = []
     new_hosts: list[str] = []
     ran_names: list[str] = []
+    planned_names: list[str] = []
+    noop_names: list[str] = []
     skipped: list[str] = []
 
     for ext in _select(phase, cfg):
@@ -80,15 +82,24 @@ def run_tool_phase(state: RunState, phase: int) -> dict:
         result_dumps.append(res.model_dump(mode="json"))
         if not res.available:
             skipped.append(ext.name)
-            continue
-        ran_names.append(ext.name)
-        new_subs += [s.host for s in res.subdomains]
-        new_hosts += [h.url for h in res.live_hosts]
+        elif res.ran:
+            ran_names.append(ext.name)
+            new_subs += [s.host for s in res.subdomains]
+            new_hosts += [h.url for h in res.live_hosts]
+        elif res.dry_run:
+            planned_names.append(ext.name)  # command built, no traffic sent
+        else:
+            # available, but built no command (no in-scope targets / missing input)
+            noop_names.append(ext.name)
 
+    executed = f"planned {planned_names or '[]'}" if cfg.dry_run else f"ran {ran_names or '[]'}"
+    parts = [f"{len(in_scope)} in-scope targets", executed]
+    if noop_names:
+        parts.append(f"no-op(no targets) {noop_names}")
+    parts.append(f"skipped(unavailable) {skipped or '[]'}")
+    parts.append(f"dropped {len(dropped)} out-of-scope")
     log = (
-        f"Phase {phase} ({Phase(phase).label}): "
-        f"{len(in_scope)} in-scope targets, ran {ran_names or '[]'}, "
-        f"skipped(unavailable) {skipped or '[]'}, dropped {len(dropped)} out-of-scope"
+        f"Phase {phase} ({Phase(phase).label}): " + ", ".join(parts)
         + (" [DRY-RUN]" if cfg.dry_run else "")
     )
 

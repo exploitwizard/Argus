@@ -444,14 +444,21 @@ def _execute_run(
             raise typer.Exit(code=2)
         scope = Scope.from_yaml(scope_path)
     else:
-        from argus.core.scope import registrable_domain
+        from argus.core.scope import _as_ip, _host_of, registrable_domain
 
         scope = Scope.implicit(target)
-        root = registrable_domain(target) or target.lower()
-        ui.console.print(
-            f"[bold red]Running in IMPLICIT-SCOPE mode[/] — scope = "
-            f"[bold]{root}[/] and subdomains"
-        )
+        host = _host_of(target)
+        if _as_ip(host) is not None:
+            ui.console.print(
+                f"[bold red]Running in IMPLICIT-SCOPE mode[/] — scope = "
+                f"[bold]{host}[/] (single host)"
+            )
+        else:
+            root = registrable_domain(host) or host
+            ui.console.print(
+                f"[bold red]Running in IMPLICIT-SCOPE mode[/] — scope = "
+                f"[bold]{root}[/] and subdomains"
+            )
 
     if not scope.is_in_scope(target):
         ui.error(f"Target {target!r} is not in scope per {scope_path or 'implicit scope'}.")
