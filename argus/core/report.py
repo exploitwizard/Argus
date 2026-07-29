@@ -25,6 +25,30 @@ _PLACEHOLDER_ENGAGEMENTS = {
     "", "unspecified", "implicit-scope", "dry-run (synthesized scope)",
 }
 
+# Cap how many raw items a human-readable report lists per section. The complete
+# set always lives in report.json, so a 50k-URL crawl can't produce a giant .md.
+MAX_LIST = 1000
+
+
+def _severity_summary(sev_counts: dict[str, int]) -> str:
+    """Compact severity breakdown like `` (critical: 1, medium: 2)`` — ``""`` if empty."""
+    if not sev_counts:
+        return ""
+    ordered = sorted(sev_counts.items(), key=lambda kv: _SEV_ORDER.get(kv[0], 5))
+    return " (" + ", ".join(f"{k}: {v}" for k, v in ordered) + ")"
+
+
+def _md_list_section(title: str, items: list[str]) -> list[str]:
+    """Markdown lines for a titled, monospaced bullet list (empty -> no section)."""
+    if not items:
+        return []
+    out = [f"## {title} ({len(items)})", ""]
+    out += [f"- `{it}`" for it in items[:MAX_LIST]]
+    if len(items) > MAX_LIST:
+        out.append(f"- _…and {len(items) - MAX_LIST} more — see `report.json` for the full list._")
+    out.append("")
+    return out
+
 
 # --------------------------------------------------------------------------- #
 # Report naming (Task 3)
@@ -70,6 +94,7 @@ def aggregate(results: list[ExtensionResult]) -> dict:
         for s in r.secrets
     ]
     params = sorted({f"{p.url}?{p.param}" for r in results for p in r.params})
+    screenshots = sorted({s.path for r in results for s in r.screenshots})
     findings = [
         {
             "template_id": f.template_id,
@@ -91,9 +116,30 @@ def aggregate(results: list[ExtensionResult]) -> dict:
         "js_endpoints": js,
         "secrets": secrets,
         "params": params,
+        "screenshots": screenshots,
         "findings": findings,
         "severity_counts": dict(sev_counts),
     }
+
+
+def live_host_details(results: list[ExtensionResult]) -> list[dict]:
+    """De-duplicated live-host rows (url, status, title, webserver, tech).
+
+    Unlike ``aggregate()['live_hosts']`` (URLs only), this keeps the probe
+    metadata so the report can show a proper table. First occurrence wins.
+    """
+    seen: dict[str, dict] = {}
+    for r in results:
+        for h in r.live_hosts:
+            if h.url not in seen:
+                seen[h.url] = {
+                    "url": h.url,
+                    "status": h.status_code,
+                    "title": h.title or "",
+                    "webserver": h.webserver or "",
+                    "tech": ", ".join(h.tech),
+                }
+    return [seen[u] for u in sorted(seen)]
 
 
 def sort_weaknesses(weaknesses: list[Weakness]) -> list[Weakness]:
@@ -212,9 +258,10 @@ def to_markdown(
         f"- URLs harvested: **{len(agg['urls'])}**",
         f"- JS endpoints: **{len(agg['js_endpoints'])}**",
         f"- Hidden params: **{len(agg['params'])}**",
+        f"- Screenshots captured: **{len(agg['screenshots'])}**",
         f"- Potential takeovers: **{len(agg['takeovers'])}**",
         f"- Secret hits (metadata only): **{len(agg['secrets'])}**",
-        f"- Findings: **{len(agg['findings'])}** {dict(agg['severity_counts'])}",
+        f"- Findings: **{len(agg['findings'])}**{_severity_summary(agg['severity_counts'])}",
         "",
     ]
 
@@ -238,8 +285,27 @@ def to_markdown(
             lines.append(f"| {s['detector']} | `{s['location']}` | {s['verified']} |")
         lines.append("")
 
-    if agg["live_hosts"]:
-        lines += ["## Live hosts", ""] + [f"- {h}" for h in agg["live_hosts"][:200]] + [""]
+    # ---- discovered assets — the full recon inventory --------------------- #
+    lines += _md_list_section("Subdomains", agg["subdomains"])
+    lines += _md_list_section("Open web ports", agg["open_ports"])
+
+    hosts = live_host_details(results)
+    if hosts:
+        lines += [f"## Live hosts ({len(hosts)})", "",
+                  "| URL | Status | Title | Server | Tech |", "|---|---|---|---|---|"]
+        for h in hosts[:MAX_LIST]:
+            title = str(h["title"]).replace("|", "\\|")
+            tech = str(h["tech"]).replace("|", "\\|")
+            status = "" if h["status"] is None else h["status"]
+            lines.append(f"| {h['url']} | {status} | {title} | {h['webserver']} | {tech} |")
+        if len(hosts) > MAX_LIST:
+            lines.append(f"\n_…and {len(hosts) - MAX_LIST} more — see `report.json`._")
+        lines.append("")
+
+    lines += _md_list_section("URLs harvested", agg["urls"])
+    lines += _md_list_section("JS endpoints", agg["js_endpoints"])
+    lines += _md_list_section("Hidden parameters", agg["params"])
+    lines += _md_list_section("Screenshots", agg["screenshots"])
 
     return "\n".join(lines)
 
@@ -296,6 +362,18 @@ img.shot { max-width: 100%; border: 1px solid #2a2d34; border-radius: 6px;
 
 def _esc(text: str) -> str:
     return _html.escape(str(text), quote=True)
+
+
+def _html_list_section(title: str, anchor: str, items: list[str]) -> str:
+    """A titled monospaced <ul> for a discovered-asset list (empty -> '')."""
+    if not items:
+        return ""
+    lis = "".join(f"<li class='mono'>{_esc(it)}</li>" for it in items[:MAX_LIST])
+    more = ""
+    if len(items) > MAX_LIST:
+        more = (f'<p class="note">…and {len(items) - MAX_LIST} more — '
+                "see report.json for the full list.</p>")
+    return f'<h2 id="{anchor}">{_esc(title)} ({len(items)})</h2><ul>{lis}</ul>{more}'
 
 
 def _sev_badge(sev: str) -> str:
@@ -404,8 +482,17 @@ def to_html(
         toc.append('<li><a href="#findings">Findings (detection only)</a></li>')
     if agg["secrets"]:
         toc.append('<li><a href="#secrets">Secret exposure</a></li>')
-    if agg["live_hosts"]:
-        toc.append('<li><a href="#hosts">Live hosts</a></li>')
+    for _key, _anchor, _label in (
+        ("subdomains", "subdomains", "Subdomains"),
+        ("open_ports", "ports", "Open web ports"),
+        ("live_hosts", "hosts", "Live hosts"),
+        ("urls", "urls", "URLs harvested"),
+        ("js_endpoints", "js", "JS endpoints"),
+        ("params", "params", "Hidden parameters"),
+        ("screenshots", "screenshots", "Screenshots"),
+    ):
+        if agg[_key]:
+            toc.append(f'<li><a href="#{_anchor}">{_label}</a></li>')
     toc.append("</ul></div>")
 
     body: list[str] = [
@@ -426,9 +513,10 @@ def to_html(
             ("URLs harvested", len(agg["urls"])),
             ("JS endpoints", len(agg["js_endpoints"])),
             ("Hidden params", len(agg["params"])),
+            ("Screenshots captured", len(agg["screenshots"])),
             ("Potential takeovers", len(agg["takeovers"])),
             ("Secret hits (metadata only)", len(agg["secrets"])),
-            ("Findings", f"{len(agg['findings'])} {dict(agg['severity_counts'])}"),
+            ("Findings", f"{len(agg['findings'])}{_severity_summary(agg['severity_counts'])}"),
         ]
     ) + "</tbody></table>")
 
@@ -457,9 +545,28 @@ def to_html(
         )
         body.append(f"<table><thead><tr><th>Detector</th><th>Location</th><th>Verified</th></tr></thead><tbody>{rows}</tbody></table>")
 
-    if agg["live_hosts"]:
-        body.append('<h2 id="hosts">Live hosts</h2>')
-        body.append("<ul>" + "".join(f"<li class='mono'>{_esc(h)}</li>" for h in agg["live_hosts"][:200]) + "</ul>")
+    body.append(_html_list_section("Subdomains", "subdomains", agg["subdomains"]))
+    body.append(_html_list_section("Open web ports", "ports", agg["open_ports"]))
+
+    hosts = live_host_details(results)
+    if hosts:
+        body.append(f'<h2 id="hosts">Live hosts ({len(hosts)})</h2>')
+        rows = "".join(
+            f"<tr><td class='mono'>{_esc(h['url'])}</td><td>{_esc('' if h['status'] is None else h['status'])}</td>"
+            f"<td>{_esc(h['title'])}</td><td>{_esc(h['webserver'])}</td><td>{_esc(h['tech'])}</td></tr>"
+            for h in hosts[:MAX_LIST]
+        )
+        body.append(
+            "<table><thead><tr><th>URL</th><th>Status</th><th>Title</th>"
+            f"<th>Server</th><th>Tech</th></tr></thead><tbody>{rows}</tbody></table>"
+        )
+        if len(hosts) > MAX_LIST:
+            body.append(f'<p class="note">…and {len(hosts) - MAX_LIST} more — see report.json.</p>')
+
+    body.append(_html_list_section("URLs harvested", "urls", agg["urls"]))
+    body.append(_html_list_section("JS endpoints", "js", agg["js_endpoints"]))
+    body.append(_html_list_section("Hidden parameters", "params", agg["params"]))
+    body.append(_html_list_section("Screenshots", "screenshots", agg["screenshots"]))
 
     body.append(
         '<p class="disclaimer">Generated by ARGUS for authorized reconnaissance and '

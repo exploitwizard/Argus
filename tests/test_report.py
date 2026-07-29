@@ -64,6 +64,60 @@ def test_markdown_has_sections_and_hides_secret_value():
     assert "AKIAEXAMPLE" not in md  # secret value never rendered
 
 
+def _rich_results():
+    """Results that populate the discovered-asset inventory (urls, js, ports…)."""
+    return [
+        get("subfinder").parse(load_fixture("subfinder.txt")),
+        get("naabu").parse(load_fixture("naabu.txt")),
+        get("httpx").parse(load_fixture("httpx.jsonl")),
+        get("gau").parse(load_fixture("gau.txt")),
+        get("katana").parse(load_fixture("katana.txt")),
+        get("linkfinder").parse(load_fixture("linkfinder.txt")),
+    ]
+
+
+def test_report_lists_every_discovered_asset_not_just_counts():
+    results = _rich_results()
+    agg = report.aggregate(results)
+    assert agg["urls"] and agg["js_endpoints"] and agg["subdomains"] and agg["open_ports"]
+
+    md = report.to_markdown("r", "example.com", results)
+    # Titled sections with the real counts, not bare numbers in the overview.
+    assert f"## URLs harvested ({len(agg['urls'])})" in md
+    assert f"## JS endpoints ({len(agg['js_endpoints'])})" in md
+    assert f"## Subdomains ({len(agg['subdomains'])})" in md
+    assert f"## Open web ports ({len(agg['open_ports'])})" in md
+    # The actual items are listed, not summarized away.
+    assert agg["urls"][0] in md
+    assert agg["js_endpoints"][0] in md
+
+    html = report.to_html("r", "example.com", results)
+    assert 'id="urls"' in html and 'id="js"' in html and 'id="subdomains"' in html
+    assert f"URLs harvested ({len(agg['urls'])})" in html
+
+
+def test_live_hosts_render_with_probe_metadata():
+    results = _rich_results()
+    md = report.to_markdown("r", "example.com", results)
+    assert "| URL | Status | Title | Server | Tech |" in md
+    rows = report.live_host_details(results)
+    assert rows and {"url", "status", "title", "webserver", "tech"} <= rows[0].keys()
+    # status code and tech make it into the rendered table
+    assert "403" in md and "Cloudflare" in md
+
+
+def test_findings_overview_has_no_empty_dict():
+    # The old bug printed "Findings: 0 {}" — the empty severity dict leaked.
+    for renderer in (report.to_markdown, report.to_html):
+        out = renderer("r", "example.com", _rich_results())
+        assert "{}" not in out
+
+
+def test_severity_summary_formats_and_empty():
+    assert report._severity_summary({}) == ""
+    assert report._severity_summary({"medium": 2, "critical": 1}) == " (critical: 1, medium: 2)"
+
+
 def test_json_is_valid_and_structured():
     js = report.to_json("run123", "example.com", _results())
     data = json.loads(js)
