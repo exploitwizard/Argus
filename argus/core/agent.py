@@ -19,6 +19,8 @@ from argus.core.modelplan import ModelPlan
 from argus.core.recipe import Recipe
 from argus.core.scope import Scope
 from argus.core.state import RunConfig, RunState, results_from_state, weaknesses_from_state
+from argus.phases import runner
+from argus.ui import progress
 
 
 def new_run_id() -> str:
@@ -85,12 +87,16 @@ def execute(cfg: RunConfig, scope: Scope) -> RunState:
     checkpointer = sessions.make_checkpointer()
     graph = build_graph(checkpointer=checkpointer)
     state = initial_state(cfg, scope)
+    reporter = progress.RunProgress(runner.planned_tools(cfg))
+    progress.set_active(reporter)
     try:
         final: RunState = graph.invoke(state, config=sessions.thread_config(cfg.run_id))
     except Exception:
         sessions.update_status(cfg.run_id, "error")
         raise
     finally:
+        reporter.finish()
+        progress.clear_active()
         sessions.close_checkpointer(checkpointer)
 
     _persist_artifacts(cfg, final)

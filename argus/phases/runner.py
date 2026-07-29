@@ -12,6 +12,20 @@ from argus.core.models import ExtensionResult, Phase
 from argus.core.scope import Scope
 from argus.core.state import RunConfig, RunState, config_from_state, results_from_state, scope_from_state
 from argus.extensions import ExtensionInputs, available_for_phase, get, has
+from argus.ui import progress as prog
+
+
+def planned_tools(cfg: RunConfig) -> list[tuple[int, str]]:
+    """The ``(phase, tool_name)`` runs a config will actually execute.
+
+    Mirrors :func:`_select` across the tool phases (1–5), counting only
+    installed extensions — used for the up-front time estimate and progress total.
+    """
+    out: list[tuple[int, str]] = []
+    for phase in cfg.phases:
+        if phase in (1, 2, 3, 4, 5):
+            out += [(phase, ext.name) for ext in _select(phase, cfg)]
+    return out
 
 
 def _known(results: list[ExtensionResult]) -> dict[str, list[str]]:
@@ -76,9 +90,18 @@ def run_tool_phase(state: RunState, phase: int) -> dict:
     noop_names: list[str] = []
     skipped: list[str] = []
 
-    for ext in _select(phase, cfg):
+    selected = _select(phase, cfg)
+    if selected:
+        prog.phase_header(phase)
+    for ext in selected:
         ext_inputs = inputs.model_copy(update={"extra_flags": cfg.flags.get(ext.name, [])})
-        res = ext.run(ext_inputs, scope, dry_run=cfg.dry_run)
+        # run_tool invokes the callable synchronously within this iteration, so
+        # capturing ext/ext_inputs by reference is safe (no deferred-loop-var bug).
+        res = prog.run_tool(
+            ext.name,
+            lambda: ext.run(ext_inputs, scope, dry_run=cfg.dry_run),
+            dry_run=cfg.dry_run,
+        )
         result_dumps.append(res.model_dump(mode="json"))
         if not res.available:
             skipped.append(ext.name)

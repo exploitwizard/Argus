@@ -516,6 +516,19 @@ def _execute_run(
     model_desc = resolved_model if plan.mode == "single" else f"{plan.mode}:{','.join(plan.ensemble)}"
     ui.info(f"Run ID: {cfg.run_id}  model={model_desc}  dry_run={dry_run}")
 
+    # Up-front, rough time estimate for the full recon (live ETA counts down
+    # per-tool as the run proceeds).
+    from argus.core import estimates
+    from argus.phases.runner import planned_tools
+
+    planned = planned_tools(cfg)
+    if planned:
+        eta = estimates.human_time(estimates.estimate_total(planned))
+        ui.info(
+            f"Estimated recon time: ~{eta} across {len(planned)} tool run(s) "
+            f"[grey58](rough — nuclei/amass dominate)[/]"
+        )
+
     final = agent.execute(cfg, scope)
 
     for line in final.get("phase_log", []):
